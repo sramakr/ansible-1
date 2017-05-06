@@ -177,9 +177,9 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.ec2 import ec2_connect, ec2_argument_spec
 
 try:
-    import boto.ec2
-    from boto.ec2.securitygroup import SecurityGroup
-    from boto.exception import BotoServerError
+    import boto3.ec2
+    from boto3.ec2.securitygroup import SecurityGroup
+    from boto3.exception import BotoServerError
     HAS_BOTO = True
 except ImportError:
     HAS_BOTO = False
@@ -356,6 +356,9 @@ def rules_expand_sources(rules):
     return [rule for rule_complex in rules
             for rule in rule_expand_sources(rule_complex)]
 
+def get_all_security_groups():
+    --return array of securitygroup object
+    
 
 def main():
     argument_spec = ec2_argument_spec()
@@ -376,6 +379,7 @@ def main():
         supports_check_mode=True,
     )
 
+    ## Check for Boto3
     if not HAS_BOTO:
         module.fail_json(msg='boto required for this module')
 
@@ -393,27 +397,37 @@ def main():
 
     changed = False
 
+    ## credentials
+    ## client = ec2_utils.boto3_inventory_conn('client', 'rds', region, **self.credentials)
+    client, resource = ec2_utils.boto3_inventory_conn('both', 'ec2', region, **params)
     ec2 = ec2_connect(module)
 
     # find the group if present
     group = None
     groups = {}
+    security_groups = []
 
     try:
-        security_groups = ec2.get_all_security_groups()
+        response = ec2.describe_security_groups()
+        if 'SecurityGroups' in response:
+            security_groups = response.get('SecurityGroups')
+        #security_groups = ec2.get_all_security_groups()
     except BotoServerError as e:
         module.fail_json(msg="Error in get_all_security_groups: %s" % e.message, exception=traceback.format_exc())
 
-    for curGroup in security_groups:
-        groups[curGroup.id] = curGroup
-        if curGroup.name in groups:
-            # Prioritise groups from the current VPC
-            if vpc_id is None or curGroup.vpc_id == vpc_id:
-                groups[curGroup.name] = curGroup
-        else:
-            groups[curGroup.name] = curGroup
 
-        if curGroup.name == name and (vpc_id is None or curGroup.vpc_id == vpc_id):
+    for sg in security_groups:
+        curGroup = resource.SecurityGroup(sg['GroupId']
+        groups[curGroup.id] = resource.SecurityGroup(curGroup.id)
+        groupName = curGroup.group_name
+        if groupName in groups:
+            # Prioritise groups from the current VPC
+            if vpc_id is None or curGroup['VpcId'] == vpc_id:
+                groups[groupName] = curGroup
+        else:
+            groups[groupName] = curGroup
+
+        if groupName == name and (vpc_id is None or curGroup['VpcId'] == vpc_id):
             group = curGroup
 
     # Ensure requested group is absent
@@ -422,6 +436,7 @@ def main():
             # found a match, delete it
             try:
                 if not module.check_mode:
+                    # ec2.delete_security_group(group['GroupId'])
                     group.delete()
             except BotoServerError as e:
                 module.fail_json(msg="Unable to delete security group '%s' - %s" % (group, e.message), exception=traceback.format_exc())
@@ -436,6 +451,7 @@ def main():
     elif state == 'present':
         if group:
             # existing group
+            # if group['Description'] != description:
             if group.description != description:
                 module.fail_json(msg="Group description does not match existing group. ec2_group does not support this case.")
 
@@ -450,6 +466,7 @@ def main():
                 # reflected in the object returned by the AWS API
                 # call. We re-read the group for getting an updated object
                 # amazon sometimes takes a couple seconds to update the security group so wait till it exists
+                while ec2.describe_security_groups(group['GroupId'])
                 while len(ec2.get_all_security_groups(filters={'group_id': group.id})) == 0:
                     time.sleep(0.1)
 
