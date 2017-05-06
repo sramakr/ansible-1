@@ -263,7 +263,7 @@
   assert:
     that:
        - 'result.failed'
-       - 'result.msg.startswith("value of region must be one of:")'
+       - 'result.msg.startswith("At least one listener")'
 
 
 # ============================================================
@@ -364,7 +364,7 @@
   assert:
     that:
        - 'result.failed'
-       - '"InvalidClientTokenId" in result.msg'
+       - '"InvalidClientTokenId" in result.exception'
 
 
 # ============================================================

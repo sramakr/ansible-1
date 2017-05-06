@@ -50,7 +50,7 @@
   assert:
     that:
        - 'result.failed'
-       - 'result.msg.startswith("value of region must be one of:")'
+       - 'result.msg.startswith("Region asdf querty 1234")'
 
 # ============================================================
 - name: test valid region parameter
@@ -122,11 +122,14 @@
   register: result
   ignore_errors: true
 
+- debug:
+    msg: "{{ result }}"
 - name: assert ec2_key with valid ec2_url
   assert:
     that:
        - 'result.failed'
-       - '"EC2ResponseError: 401 Unauthorized" in result.msg'
+       - result.exception is defined
+       - '"EC2ResponseError: 401 Unauthorized" in result.exception'
 
 # ============================================================
 - name: test credential parameters
@@ -142,7 +145,7 @@
   assert:
     that:
        - 'result.failed'
-       - '"EC2ResponseError: 401 Unauthorized" in result.msg'
+       - '"EC2ResponseError: 401 Unauthorized" in result.exception'
 
 # ============================================================
 - name: test state=absent with key_material
@@ -248,8 +251,9 @@
   ec2_key:
     name='{{ec2_key_name}}'
     state=present
-    key_material='{{ item }}'
-  with_file: sshkey ~ '.pub'
+    key_material={{ item }}
+  with_file: ~/id_rsa.pub
+#sshkey ~ '.pub'
   environment:
     EC2_REGION: '{{ec2_region}}'
     EC2_ACCESS_KEY: '{{ec2_access_key}}'
@@ -277,7 +281,8 @@
     name='{{ec2_key_name}}'
     state=present
     key_material='{{ item }}'
-  with_file: sshkey ~ '.pub'
+  with_file: ~/id_rsa.pub
+  #with_file: sshkey ~ '.pub'
   environment:
     EC2_REGION: '{{ec2_region}}'
     EC2_ACCESS_KEY: '{{ec2_access_key}}'
