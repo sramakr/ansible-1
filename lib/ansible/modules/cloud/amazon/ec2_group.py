@@ -180,6 +180,10 @@ try:
     import boto3.ec2
     from boto3.ec2.securitygroup import SecurityGroup
     from boto3.exception import BotoServerError
+<<<<<<< Updated upstream
+=======
+    from ansible.module_utils.ec2 import *
+>>>>>>> Stashed changes
     HAS_BOTO = True
 except ImportError:
     HAS_BOTO = False
@@ -187,7 +191,7 @@ except ImportError:
 import traceback
 
 
-def make_rule_key(prefix, rule, group_id, cidr_ip):
+def make_rule_key_old(prefix, rule, group_id, cidr_ip):
     """Creates a unique key for an individual group rule"""
     if isinstance(rule, dict):
         proto, from_port, to_port = [rule.get(x, None) for x in ('proto', 'from_port', 'to_port')]
@@ -203,11 +207,19 @@ def make_rule_key(prefix, rule, group_id, cidr_ip):
     return key.lower().replace('-none', '-None')
 
 
+def make_rule_key(prefix, rule, group_id, cidr_ip):
+    proto, from_port, to_port = [ rule.get(x, None) for x in ('IpProtocol', 'FromPort', 'ToPort')]
+    if proto not in ['icmp', 'tcp', 'udp'] and from_port == -1 and to_port == -1:
+        from_port = 'none'
+        to_port = 'none'
+    key = "%s-%s-%s-%s-%s-%s" % (prefix, proto, from_port, to_port, group_id, cidr_ip)
+    return key.lower().replace('-none', '-None')
+
 def addRulesToLookup(rules, prefix, dict):
     for rule in rules:
-        for grant in rule.grants:
-            dict[make_rule_key(prefix, rule, grant.group_id, grant.cidr_ip)] = (rule, grant)
-
+        for ipv4Grants, ipv6Grants in zip(rule.IpRanges, rule.Ipv6Ranges) :
+            dict[make_rule_key(prefix, rule, ipv4Grants.get('CidrIp'))] = (rule, ipv4Grants)
+            dict[make_rule_key(prefix, rule, ipv6Grants.get('CidrIpv6'))] = (rule, ipv6Grants)
 
 def validate_rule(module, rule):
     VALID_PARAMS = ('cidr_ip',
@@ -256,7 +268,7 @@ def get_target_from_rule(module, ec2, rule, name, group, groups, vpc_id):
     elif 'group_id' in rule and re.match(FOREIGN_SECURITY_GROUP_REGEX, rule['group_id']):
         # this is a foreign Security Group. Since you can't fetch it you must create an instance of it
         owner_id, group_id, group_name = re.match(FOREIGN_SECURITY_GROUP_REGEX, rule['group_id']).groups()
-        group_instance = SecurityGroup(owner_id=owner_id, name=group_name, id=group_id)
+        group_instance = SecurityGroup(owner_id=owner_id, group_name=group_name, id=group_id)
         groups[group_id] = group_instance
         groups[group_name] = group_instance
     elif 'group_id' in rule:
@@ -397,15 +409,20 @@ def main():
 
     changed = False
 
+<<<<<<< Updated upstream
     ## credentials
     ## client = ec2_utils.boto3_inventory_conn('client', 'rds', region, **self.credentials)
     client, resource = ec2_utils.boto3_inventory_conn('both', 'ec2', region, **params)
+=======
+    ec2_client, ec2_resource = ec2_utils.boto3_inventory_conn('both', 'ec2', region)
+>>>>>>> Stashed changes
     ec2 = ec2_connect(module)
 
     # find the group if present
     group = None
     groups = {}
     security_groups = []
+<<<<<<< Updated upstream
 
     try:
         response = ec2.describe_security_groups()
@@ -428,6 +445,26 @@ def main():
             groups[groupName] = curGroup
 
         if groupName == name and (vpc_id is None or curGroup['VpcId'] == vpc_id):
+=======
+    try:
+        response = ec2.get_all_security_groups()
+        if 'SecurityGroups' in response:
+            security_groups = response.get('SecurityGroups')
+    except BotoServerError as e:
+        module.fail_json(msg="Error in get_all_security_groups: %s" % e.message, exception=traceback.format_exc())
+
+    for sg in security_groups:
+        curGroup = ec2_resource.SecurityGroup(sg['GroupId'])
+        groups[curGroup.id] = curGroup
+        if curGroup.group_name in groups:
+            # Prioritise groups from the current VPC
+            if vpc_id is None or curGroup.vpc_id == vpc_id:
+                groups[curGroup.group_name] = curGroup
+        else:
+            groups[curGroup.group_name] = curGroup
+
+        if curGroup.group_name == name and (vpc_id is None or curGroup.vpc_id == vpc_id):
+>>>>>>> Stashed changes
             group = curGroup
 
     # Ensure requested group is absent
@@ -459,18 +496,24 @@ def main():
         else:
             # no match found, create it
             if not module.check_mode:
-                group = ec2.create_security_group(name, description, vpc_id=vpc_id)
-
+                response = ec2_client.create_security_group(name, description, VpcId=vpc_id)
+                groupId = response.get('GroupId')
                 # When a group is created, an egress_rule ALLOW ALL
                 # to 0.0.0.0/0 is added automatically but it's not
                 # reflected in the object returned by the AWS API
                 # call. We re-read the group for getting an updated object
                 # amazon sometimes takes a couple seconds to update the security group so wait till it exists
+<<<<<<< Updated upstream
                 while ec2.describe_security_groups(group['GroupId'])
                 while len(ec2.get_all_security_groups(filters={'group_id': group.id})) == 0:
+=======
+                while 'SecurityGroups' not in ec2.describe_security_groups(GroupIds=[groupId]):
+>>>>>>> Stashed changes
                     time.sleep(0.1)
-
-                group = ec2.get_all_security_groups(group_ids=(group.id,))[0]
+                #while len(ec2.get_all_security_groups(filters={'group_id': group.id})) == 0:
+                #    time.sleep(0.1)
+                group = ec2_resource.SecurityGroup(groupId)
+                #group = ec2.get_all_security_groups(group_ids=(group.id,))[0]
             changed = True
     else:
         module.fail_json(msg="Unsupported state requested: %s" % state)
@@ -480,10 +523,11 @@ def main():
 
         # Manage ingress rules
         groupRules = {}
-        addRulesToLookup(group.rules, 'in', groupRules)
+        addRulesToLookup(group.ip_permissions, 'in', groupRules)
 
         # Now, go through all provided rules and ensure they are there.
         if rules is not None:
+            ipPermissions=[]
             for rule in rules:
                 validate_rule(module, rule)
 
@@ -501,6 +545,8 @@ def main():
                     ip = [ip]
 
                 # If rule already exists, don't later delete it
+                ipv4Ranges=[]
+                ipv6Ranges=[]
                 for thisip in ip:
                     ruleId = make_rule_key('in', rule, group_id, thisip)
                     if ruleId in groupRules:
@@ -512,8 +558,24 @@ def main():
                             grantGroup = groups[group_id]
 
                         if not module.check_mode:
-                            group.authorize(rule['proto'], rule['from_port'], rule['to_port'], thisip, grantGroup)
-                        changed = True
+                            if (isinstance(thisip, ipaddress.IPv4Address)):
+                                ipv4Ranges.append({'CidrIp': thisip})
+                            elif (isinstance(thisip, ipaddress.IPv4Address)):
+                                ipv6Ranges.append({'CidrIpv6': thisip})
+
+                ipPermissions.append({'IpProtocol': rule['proto'],
+                                    'FromPort': rule['from_port'],
+                                    'ToPort': rule['to_port'],
+                                    'UserIdGroupPairs': [{
+                                        'GroupName': name,
+                                        'GroupId': group_id,
+                                        'VpcId': vpc_id
+                                    }],
+                                    'IpRanges': ipv4Ranges,
+                                    'Ipv6Ranges': ipv6Ranges})
+
+            group.authorize_ingress(GroupName=group.group_name, IpPermissions=ipPermissions)
+            changed = True
 
         # Finally, remove anything left in the groupRules -- these will be defunct rules
         if purge_rules:
@@ -522,12 +584,12 @@ def main():
                 if grant.group_id:
                     if grant.owner_id != group.owner_id:
                         # this is a foreign Security Group. Since you can't fetch it you must create an instance of it
-                        group_instance = SecurityGroup(owner_id=grant.owner_id, name=grant.name, id=grant.group_id)
+                        group_instance = SecurityGroup(owner_id=grant.owner_id, name=grant.group_name, id=grant.group_id)
                         groups[grant.group_id] = group_instance
-                        groups[grant.name] = group_instance
+                        groups[grant.group_name] = group_instance
                     grantGroup = groups[grant.group_id]
                 if not module.check_mode:
-                    group.revoke(rule.ip_protocol, rule.from_port, rule.to_port, grant.cidr_ip, grantGroup)
+                    group.revoke_ingress(rule.ip_protocol, rule.from_port, rule.to_port, grant.cidr_ip, grantGroup)
                 changed = True
 
         # Manage egress rules
