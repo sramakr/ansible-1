@@ -94,9 +94,10 @@ class AWSRetry(CloudRetry):
 def boto3_conn(module, conn_type=None, resource=None, region=None, endpoint=None, **params):
     try:
         return _boto3_conn(conn_type=conn_type, resource=resource, region=region, endpoint=endpoint, **params)
-    except ValueError:
-        module.fail_json(msg='There is an issue in the code of the module. You must specify either both, resource or client to the conn_type '
-                             'parameter in the boto3_conn function call')
+    except AnsibleAWSError, awsError:
+        module.fail_json(msg=awsError.message)
+    except ValueError, valueError:
+        module.fail_json(msg=valueError.message)
 
 def _boto3_conn(conn_type=None, resource=None, region=None, endpoint=None, **params):
     profile = params.pop('profile_name', None)
@@ -106,6 +107,9 @@ def _boto3_conn(conn_type=None, resource=None, region=None, endpoint=None, **par
                          'must specify either both, resource, or client to '
                          'the conn_type parameter in the boto3_conn function '
                          'call')
+    if region not in boto3.session.Session(profile_name=profile).get_available_regions(resource):
+        raise AnsibleAWSError("Region %s does not seem to be available for aws module %s. If the region definitely exists, you may need to upgrade "
+                              "boto or extend with endpoints_path" % (region, 'boto.ec2'))
 
     if conn_type == 'resource':
         resource = boto3.session.Session(profile_name=profile).resource(resource, region_name=region, endpoint_url=endpoint, **params)
@@ -208,7 +212,8 @@ def get_aws_connection_info(module, boto3=False):
             security_token = os.environ['AWS_SESSION_TOKEN']
         elif 'EC2_SECURITY_TOKEN' in os.environ:
             security_token = os.environ['EC2_SECURITY_TOKEN']
-        else:
+
+        if not security_token:
             # in case security_token came in as empty string
             security_token = None
 
